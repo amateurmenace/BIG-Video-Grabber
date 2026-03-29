@@ -37,6 +37,43 @@ export default function DownloadTab({ downloadPath, activeDownloads }: DownloadT
   const [selectedFormats, setSelectedFormats] = useState<Map<string, string>>(new Map());
   const [errorMap, setErrorMap] = useState<Map<string, string>>(new Map());
 
+  // Extract a human-readable title from URL instantly (no network)
+  const extractTitleFromUrl = (url: string): string => {
+    try {
+      const u = new URL(url);
+      if (u.hostname.includes('youtube.com') || u.hostname.includes('youtu.be')) {
+        return 'YouTube Video';
+      }
+      if (u.hostname.includes('vimeo.com')) return 'Vimeo Video';
+      if (u.hostname.includes('twitter.com') || u.hostname.includes('x.com')) return 'X/Twitter Video';
+      if (u.hostname.includes('facebook.com') || u.hostname.includes('fb.watch')) return 'Facebook Video';
+      if (u.hostname.includes('tiktok.com')) return 'TikTok Video';
+      if (u.hostname.includes('instagram.com')) return 'Instagram Video';
+      if (u.hostname.includes('twitch.tv')) return 'Twitch Video';
+      return `Video from ${u.hostname.replace('www.', '')}`;
+    } catch {
+      return 'Video';
+    }
+  };
+
+  // Extract thumbnail URL instantly for YouTube (others load from yt-dlp)
+  const extractThumbnailFromUrl = (url: string): string | null => {
+    try {
+      const u = new URL(url);
+      // YouTube — we can construct the thumbnail URL directly
+      if (u.hostname.includes('youtube.com') || u.hostname.includes('youtu.be')) {
+        let videoId = u.searchParams.get('v');
+        if (!videoId && u.hostname.includes('youtu.be')) {
+          videoId = u.pathname.slice(1);
+        }
+        if (videoId) {
+          return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+        }
+      }
+    } catch {}
+    return null;
+  };
+
   const extractUrls = (text: string): string[] => {
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
     const urlRegex = /https?:\/\/[^\s]+/;
@@ -62,49 +99,54 @@ export default function DownloadTab({ downloadPath, activeDownloads }: DownloadT
       toast.error("No valid URLs found");
       return;
     }
-    fetchMetadataForUrls(urls);
+    addUrlCards(urls);
   };
 
-  const fetchMetadataForUrls = async (urls: string[]) => {
+  const addUrlCards = (urls: string[]) => {
     const newMap = new Map(metadataMap);
-    const newErrors = new Map(errorMap);
 
     for (const url of urls) {
-      if (newMap.has(url) && newMap.get(url) !== 'error') continue;
-      newMap.set(url, 'loading');
+      if (newMap.has(url)) continue;
+      // Show card IMMEDIATELY with URL as title — user can download right away
+      const placeholder: VideoMetadata = {
+        title: extractTitleFromUrl(url),
+        thumbnail: extractThumbnailFromUrl(url),
+        duration: null,
+        duration_string: null,
+        uploader: null,
+        webpage_url: url,
+        extractor: 'loading',
+        formatChoices: [{ id: "bv[vcodec~='^(avc|h264)']+ba[acodec~='^(mp4a|aac)']/bv*+ba/b", label: 'Best Quality (MP4)' }],
+      };
+      newMap.set(url, placeholder);
     }
     setMetadataMap(new Map(newMap));
 
-    // Phase 1: Quick info for all URLs in parallel (fast — title + thumbnail)
-    const quickPromises = urls
-      .filter(url => !metadataMap.has(url) || metadataMap.get(url) === 'error' || metadataMap.get(url) === 'loading')
-      .map(async (url) => {
-        try {
-          const res = await fetch('/api/ytdlp-quick-info', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url }),
-          });
-          if (!res.ok) throw new Error((await res.json()).error || 'Failed');
-          const data = await res.json();
-          // Store quick info with empty formats — format selector will show "Best Quality" only
-          newMap.set(url, { ...data, formats: [], formatChoices: [{ id: 'bv[vcodec~=\'^(avc|h264)\']+ba[acodec~=\'^(mp4a|aac)\']/bv*+ba/b', label: 'Best Quality' }] });
-          newErrors.delete(url);
-        } catch (e: any) {
-          newMap.set(url, 'error');
-          newErrors.set(url, e.message);
-        }
-        setMetadataMap(new Map(newMap));
-        setErrorMap(new Map(newErrors));
-      });
-
-    await Promise.all(quickPromises);
-
-    // Phase 2: Full format info in background (slow — but user already sees thumbnails)
+    // Fetch real metadata in background — updates cards as data arrives
     for (const url of urls) {
-      const current = newMap.get(url);
-      if (!current || current === 'error' || current === 'loading') continue;
-      // Fetch full formats in background
+      fetch('/api/ytdlp-quick-info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      }).then(async (res) => {
+        if (!res.ok) return;
+        const data = await res.json();
+        setMetadataMap(prev => {
+          const updated = new Map(prev);
+          const existing = updated.get(url);
+          updated.set(url, {
+            ...data,
+            formats: [],
+            formatChoices: (existing && typeof existing === 'object' && 'formatChoices' in existing)
+              ? existing.formatChoices
+              : [{ id: "bv[vcodec~='^(avc|h264)']+ba[acodec~='^(mp4a|aac)']/bv*+ba/b", label: 'Best Quality (MP4)' }],
+            extractor: data.extractor || 'unknown',
+          });
+          return updated;
+        });
+      }).catch(() => {});
+
+      // Full format list in background (even slower)
       fetch('/api/ytdlp-info', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -117,7 +159,7 @@ export default function DownloadTab({ downloadPath, activeDownloads }: DownloadT
           updated.set(url, data);
           return updated;
         });
-      }).catch(() => {}); // non-critical, quick info is enough to download
+      }).catch(() => {});
     }
   };
 
@@ -208,15 +250,8 @@ export default function DownloadTab({ downloadPath, activeDownloads }: DownloadT
                 const activeDl = ytdlpDownloads.find(d => d.url === url);
 
                 if (data === 'loading') {
-                  return (
-                    <div key={url} className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
-                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-muted-foreground truncate">{url}</p>
-                        <p className="text-xs text-muted-foreground">Fetching video info...</p>
-                      </div>
-                    </div>
-                  );
+                  // Shouldn't happen with new code, but handle gracefully
+                  return null;
                 }
 
                 if (data === 'error') {
@@ -258,7 +293,11 @@ export default function DownloadTab({ downloadPath, activeDownloads }: DownloadT
                         {meta.duration && (
                           <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDuration(meta.duration)}</span>
                         )}
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">{meta.extractor}</Badge>
+                        {meta.extractor === 'loading' ? (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 gap-1"><Loader2 className="h-2.5 w-2.5 animate-spin" />fetching info...</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">{meta.extractor}</Badge>
+                        )}
                       </div>
 
                       {/* Active download progress */}

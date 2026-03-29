@@ -184,13 +184,16 @@ export async function downloadVideo(options: DownloadOptions): Promise<ChildProc
   if (options.formatId) {
     args.push("-f", options.formatId);
   } else {
-    // Prefer H.264+AAC (natively playable MP4), fall back to best available
-    args.push("-f", "bv[vcodec~='^(avc|h264)']+ba[acodec~='^(mp4a|aac)']/bv[vcodec~='^(avc|h264)']+ba/bv*+ba/b");
+    // Force H.264 video + AAC/M4A audio — exclude AV1 and VP9 which QuickTime can't play
+    // The S flag sorts by size/quality within codec preference
+    args.push("-S", "vcodec:h264,acodec:m4a");
+    args.push("-f", "bv*+ba/b");
   }
 
-  // Merge into mp4 container; recode if source codecs aren't mp4-compatible
+  // Merge into mp4 container
   args.push("--merge-output-format", "mp4");
-  args.push("--postprocessor-args", "ffmpeg:-c:v copy -c:a aac -movflags +faststart");
+  // Re-encode to H.264 if source is AV1/VP9 (ensures universal playback)
+  args.push("--recode-video", "mp4");
 
   args.push(options.url);
 
