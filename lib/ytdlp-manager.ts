@@ -73,7 +73,7 @@ function downloadFile(url: string, destPath: string): Promise<void> {
           });
         });
         file.on("error", (err) => {
-          fs.unlinkSync(tmpPath).toString;
+          try { fs.unlinkSync(tmpPath); } catch {}
           reject(err);
         });
       }).on("error", (err) => {

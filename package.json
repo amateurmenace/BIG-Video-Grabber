@@ -4,11 +4,11 @@
   "description": "Comprehensive video downloading and broadcast conversion app for Brookline Interactive Group",
   "author": "Stephen Walter <stephen@brooklineinteractive.org>",
   "type": "module",
-  "main": "dist-server/main.js",
+  "main": "dist-server/main.cjs",
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
-    "build:server": "esbuild main.ts server.ts --bundle --format=esm --platform=node --target=node18 --outdir=dist-server --external:express --external:puppeteer --external:fluent-ffmpeg --external:@ffmpeg-installer/ffmpeg --external:vite --external:electron",
+    "build:server": "esbuild main.ts server.ts --bundle --format=cjs --platform=node --target=node18 --outdir=dist-server --out-extension:.js=.cjs --external:express --external:puppeteer --external:fluent-ffmpeg --external:@ffmpeg-installer/ffmpeg --external:vite --external:electron",
     "build:electron": "npm run build && npm run build:server",
     "pack:win": "npm run build:electron && electron-builder --win",
     "pack:mac": "npm run build:electron && electron-builder --mac",

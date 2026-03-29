@@ -5,12 +5,11 @@ import puppeteer from "puppeteer";
 import { exec } from "child_process";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
-import { fileURLToPath } from 'url';
 import { getYtDlpPath, getYtDlpStatus, updateYtDlp, checkForUpdate, getYtDlpVersion } from './lib/ytdlp-manager.js';
 import { getVideoInfo, downloadVideo, parseProgressLine, getSimplifiedFormats } from './lib/ytdlp-runner.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// __dirname is provided by CJS bundle or tsx runtime
+const __server_dirname = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
 let ffmpegPath = ffmpegInstaller.path;
 if (ffmpegPath.includes('app.asar')) {
@@ -44,43 +43,50 @@ const testEncoder = (encoder: string): Promise<boolean> => {
 const getBestEncoderOptions = (speed: string = 'medium', compression: string = 'medium'): Promise<string[]> => {
   return new Promise((resolve) => {
     ffmpeg.getAvailableEncoders(async (err, encoders) => {
-      let cpuPreset = speed; // 'ultrafast', 'fast', 'medium', 'slow'
-      let cpuCrf = '22';
-      let hwPreset = speed === 'medium' ? 'fast' : speed; // HW presets often don't have 'medium'
-      let hwBitrate = '5000k';
+      let cpuPreset = speed;
+      let cpuCrf = '23';
+      // Use lower bitrates — Zoom recordings are typically 1-3 Mbps, no need to inflate
+      let hwBitrate = '3000k';
+      let hwMaxrate = '4000k';
+      let hwQuality = '65'; // VideoToolbox quality scale (0-100, higher = better)
 
       if (compression === 'low') {
         cpuCrf = '18';
-        hwBitrate = '8000k';
+        hwBitrate = '6000k';
+        hwMaxrate = '8000k';
+        hwQuality = '75';
       } else if (compression === 'high') {
         cpuCrf = '28';
-        hwBitrate = '2500k';
+        hwBitrate = '1500k';
+        hwMaxrate = '2000k';
+        hwQuality = '50';
       }
+
+      const hwPreset = speed === 'medium' ? 'fast' : speed;
 
       if (err || !encoders) {
         console.log("Could not probe encoders, falling back to libx264 (CPU)");
         return resolve(['-c:v', 'libx264', '-preset', cpuPreset, '-crf', cpuCrf]);
       }
-      
-      // Check for hardware encoders in order of preference
+
       if (encoders['h264_nvenc'] && await testEncoder('h264_nvenc')) {
         console.log("Using NVIDIA Hardware Acceleration (h264_nvenc)");
-        return resolve(['-c:v', 'h264_nvenc', '-preset', hwPreset, '-b:v', hwBitrate]);
+        return resolve(['-c:v', 'h264_nvenc', '-preset', hwPreset, '-b:v', hwBitrate, '-maxrate', hwMaxrate, '-bufsize', hwMaxrate]);
       }
       if (encoders['h264_videotoolbox'] && await testEncoder('h264_videotoolbox')) {
         console.log("Using Apple Hardware Acceleration (h264_videotoolbox)");
-        return resolve(['-c:v', 'h264_videotoolbox', '-b:v', hwBitrate]);
+        // VideoToolbox: use quality-based encoding to avoid file bloat
+        return resolve(['-c:v', 'h264_videotoolbox', '-q:v', hwQuality, '-allow_sw', '1']);
       }
       if (encoders['h264_qsv'] && await testEncoder('h264_qsv')) {
         console.log("Using Intel Quick Sync Hardware Acceleration (h264_qsv)");
-        return resolve(['-c:v', 'h264_qsv', '-preset', hwPreset, '-b:v', hwBitrate]);
+        return resolve(['-c:v', 'h264_qsv', '-preset', hwPreset, '-b:v', hwBitrate, '-maxrate', hwMaxrate]);
       }
       if (encoders['h264_amf'] && await testEncoder('h264_amf')) {
         console.log("Using AMD Hardware Acceleration (h264_amf)");
-        return resolve(['-c:v', 'h264_amf', '-b:v', hwBitrate]);
+        return resolve(['-c:v', 'h264_amf', '-b:v', hwBitrate, '-maxrate', hwMaxrate]);
       }
-      
-      // Fallback
+
       console.log("No hardware encoders found or supported, falling back to libx264 (CPU)");
       return resolve(['-c:v', 'libx264', '-preset', cpuPreset, '-crf', cpuCrf]);
     });
@@ -999,7 +1005,7 @@ export async function startServer(): Promise<{ server: any, port: number }> {
     });
     app.use(vite.middlewares);
   } else {
-    const rootPath = __dirname.includes('dist-server') ? path.join(__dirname, '..') : process.cwd();
+    const rootPath = __server_dirname.includes('dist-server') ? path.join(__server_dirname, '..') : process.cwd();
     const distPath = path.join(rootPath, 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {

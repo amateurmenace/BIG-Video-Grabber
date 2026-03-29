@@ -130,13 +130,13 @@ export async function downloadVideo(options: DownloadOptions): Promise<ChildProc
   if (options.formatId) {
     args.push("-f", options.formatId);
   } else {
-    // Default: best video+audio merged into mp4, fallback to best available
-    args.push("-f", "bv*+ba/b");
+    // Prefer H.264+AAC (natively playable MP4), fall back to best available
+    args.push("-f", "bv[vcodec~='^(avc|h264)']+ba[acodec~='^(mp4a|aac)']/bv[vcodec~='^(avc|h264)']+ba/bv*+ba/b");
   }
 
-  // Always output mp4 — remux webm/mkv to mp4 container
+  // Merge into mp4 container; recode if source codecs aren't mp4-compatible
   args.push("--merge-output-format", "mp4");
-  args.push("--remux-video", "mp4");
+  args.push("--postprocessor-args", "ffmpeg:-c:v copy -c:a aac -movflags +faststart");
 
   args.push(options.url);
 

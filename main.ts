@@ -1,15 +1,21 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { startServer } from './server.js';
 import { getYtDlpPath, checkForUpdate, updateYtDlp } from './lib/ytdlp-manager.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let serverInstance: any = null;
 let serverPort: number = 3000;
+
+// Catch all unhandled errors so the app doesn't crash silently
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  dialog.showErrorBox('BIG Video Grabber Error', `${error.name}: ${error.message}\n\n${error.stack || ''}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
+});
 
 async function initYtDlp() {
   try {
@@ -17,7 +23,6 @@ async function initYtDlp() {
     process.env.YTDLP_PATH = ytdlpPath;
     console.log(`yt-dlp ready at: ${ytdlpPath}`);
 
-    // Auto-update if stale (>24h)
     if (checkForUpdate()) {
       console.log("yt-dlp nightly update available, downloading...");
       await updateYtDlp().catch(e => console.error("yt-dlp update failed:", e.message));
@@ -38,8 +43,8 @@ async function createWindow() {
     },
   });
 
-  // Initialize yt-dlp in background
-  initYtDlp();
+  // Initialize yt-dlp in background (don't block window creation)
+  initYtDlp().catch(() => {});
 
   // Periodic yt-dlp update check every 24 hours
   setInterval(() => {
@@ -48,18 +53,20 @@ async function createWindow() {
     }
   }, 24 * 60 * 60 * 1000);
 
-  // Start the Express server if not already running
+  // Start the Express server
   if (!serverInstance) {
     try {
       const result = await startServer();
       serverInstance = result.server;
       serverPort = result.port;
-    } catch (e) {
+      console.log(`Server started on port ${serverPort}`);
+    } catch (e: any) {
       console.error("Failed to start server:", e);
+      dialog.showErrorBox('Server Error', `Failed to start the backend server: ${e.message}`);
+      return;
     }
   }
 
-  // Load the app
   mainWindow.loadURL(`http://localhost:${serverPort}`);
 
   mainWindow.on('closed', () => {
@@ -67,7 +74,9 @@ async function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(createWindow).catch((e) => {
+  console.error("App failed to start:", e);
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
