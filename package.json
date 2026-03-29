@@ -1,7 +1,8 @@
 {
   "name": "big-video-grabber",
-  "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "Comprehensive video downloading and broadcast conversion app for Brookline Interactive Group",
+  "author": "Stephen Walter <stephen@brooklineinteractive.org>",
   "type": "module",
   "main": "dist-server/main.js",
   "scripts": {
@@ -23,10 +24,32 @@
       "output": "release"
     },
     "win": {
-      "target": "nsis"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "mac": {
-      "target": "dmg"
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        }
+      ],
+      "identity": "Stephen Walter (6M536MV7GT)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false
     },
     "asarUnpack": [
       "node_modules/puppeteer",
