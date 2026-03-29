@@ -6,7 +6,7 @@ import { exec } from "child_process";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import { getYtDlpPath, getYtDlpStatus, updateYtDlp, checkForUpdate, getYtDlpVersion } from './lib/ytdlp-manager.js';
-import { getVideoInfo, downloadVideo, parseProgressLine, getSimplifiedFormats } from './lib/ytdlp-runner.js';
+import { getQuickInfo, getVideoInfo, downloadVideo, parseProgressLine, getSimplifiedFormats } from './lib/ytdlp-runner.js';
 
 // __dirname is provided by CJS bundle or tsx runtime
 const __server_dirname = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
@@ -862,12 +862,22 @@ export async function startServer(): Promise<{ server: any, port: number }> {
     }
   });
 
+  // Fast info — title, thumbnail, duration, uploader (~1-2 seconds)
+  app.post("/api/ytdlp-quick-info", async (req, res) => {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: "URL is required" });
+    try {
+      const info = await getQuickInfo(url);
+      res.json(info);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Full info — includes all formats (~5-15 seconds)
   app.post("/api/ytdlp-info", async (req, res) => {
     const { url } = req.body;
-    if (!url) {
-      return res.status(400).json({ error: "URL is required" });
-    }
-
+    if (!url) return res.status(400).json({ error: "URL is required" });
     try {
       const metadata = await getVideoInfo(url);
       const formatChoices = getSimplifiedFormats(metadata.formats);
@@ -909,23 +919,19 @@ export async function startServer(): Promise<{ server: any, port: number }> {
     // Also add to activeDownloads for unified status
     activeDownloads.set(taskId, dlState);
 
-    // Start download asynchronously
+    // Start download immediately — skip slow metadata fetch, get filename from yt-dlp output
     (async () => {
       try {
-        addLog('download', `Fetching video info`, url);
-        let title = 'video';
-        try {
-          const info = await getVideoInfo(url);
-          title = info.title || 'video';
-          dlState.filename = title;
-          addLog('download', `Video info received: ${title}`, info.duration_string ? `Duration: ${info.duration_string}` : undefined);
-        } catch {
-          dlState.filename = 'video';
-          addLog('download', `Could not fetch metadata, downloading directly`, url);
-        }
+        // Quick title fetch in parallel (non-blocking) — just for the UI label
+        getQuickInfo(url).then(info => {
+          if (dlState.filename === 'Downloading...') {
+            dlState.filename = info.title || 'video';
+          }
+        }).catch(() => {});
 
         dlState.state = 'inProgress';
-        addLog('download', `Starting yt-dlp download: ${title}`);
+        dlState.filename = 'Downloading...';
+        addLog('download', `Starting download`, url);
 
         const proc = await downloadVideo({
           url,

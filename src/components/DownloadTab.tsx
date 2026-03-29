@@ -75,27 +75,49 @@ export default function DownloadTab({ downloadPath, activeDownloads }: DownloadT
     }
     setMetadataMap(new Map(newMap));
 
-    for (const url of urls) {
-      if (metadataMap.get(url) && metadataMap.get(url) !== 'error' && metadataMap.get(url) !== 'loading') continue;
-      try {
-        const res = await fetch('/api/ytdlp-info', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url }),
-        });
-        if (!res.ok) {
+    // Phase 1: Quick info for all URLs in parallel (fast — title + thumbnail)
+    const quickPromises = urls
+      .filter(url => !metadataMap.has(url) || metadataMap.get(url) === 'error' || metadataMap.get(url) === 'loading')
+      .map(async (url) => {
+        try {
+          const res = await fetch('/api/ytdlp-quick-info', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+          });
+          if (!res.ok) throw new Error((await res.json()).error || 'Failed');
           const data = await res.json();
-          throw new Error(data.error || 'Failed to fetch info');
+          // Store quick info with empty formats — format selector will show "Best Quality" only
+          newMap.set(url, { ...data, formats: [], formatChoices: [{ id: 'bv[vcodec~=\'^(avc|h264)\']+ba[acodec~=\'^(mp4a|aac)\']/bv*+ba/b', label: 'Best Quality' }] });
+          newErrors.delete(url);
+        } catch (e: any) {
+          newMap.set(url, 'error');
+          newErrors.set(url, e.message);
         }
+        setMetadataMap(new Map(newMap));
+        setErrorMap(new Map(newErrors));
+      });
+
+    await Promise.all(quickPromises);
+
+    // Phase 2: Full format info in background (slow — but user already sees thumbnails)
+    for (const url of urls) {
+      const current = newMap.get(url);
+      if (!current || current === 'error' || current === 'loading') continue;
+      // Fetch full formats in background
+      fetch('/api/ytdlp-info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      }).then(async (res) => {
+        if (!res.ok) return;
         const data = await res.json();
-        newMap.set(url, data);
-        newErrors.delete(url);
-      } catch (e: any) {
-        newMap.set(url, 'error');
-        newErrors.set(url, e.message);
-      }
-      setMetadataMap(new Map(newMap));
-      setErrorMap(new Map(newErrors));
+        setMetadataMap(prev => {
+          const updated = new Map(prev);
+          updated.set(url, data);
+          return updated;
+        });
+      }).catch(() => {}); // non-critical, quick info is enough to download
     }
   };
 

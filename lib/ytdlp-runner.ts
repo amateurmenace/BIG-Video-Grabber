@@ -44,6 +44,64 @@ export interface DownloadOptions {
   ytdlpPath?: string;
 }
 
+/**
+ * Fast info fetch — gets just title, thumbnail, duration, uploader in ~1-2 seconds.
+ * Does NOT resolve formats (that's slow). Use getVideoFormats() separately if needed.
+ */
+export async function getQuickInfo(url: string): Promise<Omit<VideoMetadata, 'formats'>> {
+  const ytdlpPath = await getYtDlpPath();
+
+  return new Promise((resolve, reject) => {
+    const separator = '|||FIELD|||';
+    const args = [
+      "--print", `%(title)s${separator}%(thumbnail)s${separator}%(duration)s${separator}%(duration_string)s${separator}%(uploader)s${separator}%(webpage_url)s${separator}%(extractor)s`,
+      "--no-download",
+      "--no-warnings",
+      "--no-playlist",
+      "--socket-timeout", "10",
+      url,
+    ];
+
+    const proc = spawn(ytdlpPath, args);
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout.on("data", (data) => { stdout += data.toString(); });
+    proc.stderr.on("data", (data) => { stderr += data.toString(); });
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `yt-dlp exited with code ${code}`));
+        return;
+      }
+      try {
+        const parts = stdout.trim().split(separator);
+        resolve({
+          title: parts[0] && parts[0] !== 'NA' ? parts[0] : "Unknown",
+          thumbnail: parts[1] && parts[1] !== 'NA' ? parts[1] : null,
+          duration: parts[2] && parts[2] !== 'NA' ? parseFloat(parts[2]) : null,
+          duration_string: parts[3] && parts[3] !== 'NA' ? parts[3] : null,
+          uploader: parts[4] && parts[4] !== 'NA' ? parts[4] : null,
+          upload_date: null,
+          description: null,
+          webpage_url: parts[5] && parts[5] !== 'NA' ? parts[5] : url,
+          extractor: parts[6] && parts[6] !== 'NA' ? parts[6] : "generic",
+          filesize_approx: null,
+        });
+      } catch (e) {
+        reject(new Error(`Failed to parse yt-dlp output: ${(e as Error).message}`));
+      }
+    });
+
+    proc.on("error", (err) => {
+      reject(new Error(`Failed to run yt-dlp: ${err.message}`));
+    });
+  });
+}
+
+/**
+ * Full info fetch — resolves all formats. Slower (5-15 seconds).
+ */
 export async function getVideoInfo(url: string): Promise<VideoMetadata> {
   const ytdlpPath = await getYtDlpPath();
 
@@ -53,6 +111,7 @@ export async function getVideoInfo(url: string): Promise<VideoMetadata> {
       "--no-download",
       "--no-warnings",
       "--no-playlist",
+      "--socket-timeout", "10",
       url,
     ];
 
@@ -60,13 +119,8 @@ export async function getVideoInfo(url: string): Promise<VideoMetadata> {
     let stdout = "";
     let stderr = "";
 
-    proc.stdout.on("data", (data) => {
-      stdout += data.toString();
-    });
-
-    proc.stderr.on("data", (data) => {
-      stderr += data.toString();
-    });
+    proc.stdout.on("data", (data) => { stdout += data.toString(); });
+    proc.stderr.on("data", (data) => { stderr += data.toString(); });
 
     proc.on("close", (code) => {
       if (code !== 0) {
