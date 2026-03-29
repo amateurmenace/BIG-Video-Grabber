@@ -1,0 +1,5 @@
+{
+  "name": "Brookline Meetings Downloader",
+  "description": "Search and download Zoom recordings of public meetings from the Town of Brookline.",
+  "requestFramePermissions": []
+}
