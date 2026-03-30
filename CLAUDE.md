@@ -104,7 +104,7 @@ xcrun stapler staple "release/BIG Video Grabber-1.0.0-arm64.dmg"
 
 ## Key Design Decisions
 
-- **esbuild outputs CJS (not ESM)** — Electron's main process doesn't support ESM. Output files are `.cjs` to avoid conflict with `"type": "module"` in package.json. Never use `import.meta.url` in server/main code.
+- **esbuild outputs CJS (not ESM)** — Electron's main process doesn't support ESM. Output files are `.cjs`. The `"type": "module"` field was removed from package.json because Electron on Windows crashes with it even when loading `.cjs` files. tsx handles ESM imports in dev mode regardless. Never use `import.meta.url` in server/main code.
 - **yt-dlp forces H.264 codec** — YouTube defaults to AV1 which QuickTime can't play. Uses `-S vcodec:h264,acodec:m4a` to prefer H.264, and `--recode-video mp4` as fallback to re-encode if AV1 slips through.
 - **yt-dlp binary is downloaded at runtime** (not bundled) to `bin/` directory. Auto-updates nightly. Keeps the app small.
 - **Instant URL cards** — When user pastes a YouTube URL, the card with thumbnail appears immediately (thumbnail from `i.ytimg.com`, no yt-dlp needed). Title/duration fill in from yt-dlp in background. User can click Download without waiting.
@@ -143,3 +143,4 @@ Default output format for cable TV (all customizable in the UI):
 - Zoom's web interface changes frequently — Puppeteer selectors in `server.ts` may need updating when Zoom redesigns their recording page.
 - Windows builds are unsigned (no Windows code signing certificate). Users will see SmartScreen warnings.
 - The `electron/main.ts` file is a legacy entry point and is NOT used by the current build. The active Electron entry is `main.ts` at project root.
+- **Do NOT add `"type": "module"` back to package.json** — it causes Electron to crash on Windows with "undefined: undefined" even when loading `.cjs` files. tsx handles ESM in dev mode without it.
