@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Comprehensive video downloading and broadcast conversion app for Brookline Interactive Group",
   "author": "Stephen Walter <stephen@brooklineinteractive.org>",
-  "type": "module",
   "main": "dist-server/main.cjs",
   "scripts": {
     "dev": "tsx server.ts",
